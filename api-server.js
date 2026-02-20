@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
+require('dotenv').config();
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -395,6 +396,16 @@ function handleTasks(req, res, parsed, segments, method) {
 function handleFiles(req, res, parsed, method) {
   const filePath = parsed.query.path;
   if (!filePath) return errorReply(res, 400, 'path query param is required');
+
+  // Directory listing for memory/
+  if (method === 'GET' && parsed.query.list === 'true' && filePath === 'memory/') {
+    const dir = path.join(WORKSPACE, 'memory');
+    try {
+      const files = fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort();
+      return jsonReply(res, 200, files);
+    } catch { return jsonReply(res, 200, []); }
+  }
+
   if (!isAllowedPath(filePath)) return errorReply(res, 403, 'Access denied: path not allowed');
 
   const fullPath = path.join(WORKSPACE, filePath);
@@ -1033,6 +1044,207 @@ function handleCron(req, res, parsed, segments, method) {
   return errorReply(res, 405, 'Method not allowed');
 }
 
+// --- Route: Trello ---
+const TRELLO_KEY = process.env.TRELLO_API_KEY || '';
+const TRELLO_TOKEN_VAL = process.env.TRELLO_TOKEN || '';
+const TRELLO_BOARD_ID = process.env.TRELLO_BOARD_ID || 'rKsJ685I';
+const TRELLO_LIST_MAP = {
+  '69977fe2f1b09426a1248ef9': 'new',
+  '69977fe1950e6e93b954b618': 'in-progress',
+  '69977fe16e0e3c12fd7095b0': 'in-progress',  // Review → in-progress in dashboard
+  '69977fe16be4f48133a0d89e': 'done',
+};
+const TRELLO_LIST_NAMES = {
+  '69977fe2f1b09426a1248ef9': 'Backlog',
+  '69977fe1950e6e93b954b618': 'In Progress',
+  '69977fe16e0e3c12fd7095b0': 'Review',
+  '69977fe16be4f48133a0d89e': 'Done',
+};
+
+function trelloFetch(apiPath) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const sep = apiPath.includes('?') ? '&' : '?';
+    const reqUrl = `https://api.trello.com/1${apiPath}${sep}key=${TRELLO_KEY}&token=${TRELLO_TOKEN_VAL}`;
+    https.get(reqUrl, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch { reject(new Error('Invalid JSON from Trello')); }
+      });
+    }).on('error', reject);
+  });
+}
+
+function handleTrello(req, res, parsed, segments, method) {
+  if (!TRELLO_KEY || !TRELLO_TOKEN_VAL) return errorReply(res, 503, 'Trello not configured');
+
+  // GET /trello/boards — list board cards grouped by list
+  if (method === 'GET' && (segments.length === 1 || segments[1] === 'board')) {
+    return trelloFetch(`/boards/${TRELLO_BOARD_ID}/lists?cards=all&card_fields=name,desc,pos,idList,dateLastActivity,labels`)
+      .then(lists => {
+        const result = lists.map(l => ({
+          id: l.id,
+          name: l.name,
+          dashboardStatus: TRELLO_LIST_MAP[l.id] || 'new',
+          cards: (l.cards || []).map(c => ({
+            id: c.id,
+            name: c.name,
+            desc: c.desc || '',
+            listId: c.idList,
+            listName: TRELLO_LIST_NAMES[c.idList] || 'Unknown',
+            lastActivity: c.dateLastActivity,
+            labels: (c.labels || []).map(lb => lb.name),
+          }))
+        }));
+        return jsonReply(res, 200, result);
+      })
+      .catch(e => errorReply(res, 502, 'Trello API error: ' + e.message));
+  }
+
+  // POST /trello/sync — import Trello cards as dashboard tasks
+  if (method === 'POST' && segments[1] === 'sync') {
+    return trelloFetch(`/boards/${TRELLO_BOARD_ID}/lists?cards=all&card_fields=name,desc,pos,idList,dateLastActivity,labels`)
+      .then(lists => {
+        const tasks = readTasks();
+        let imported = 0, updated = 0, skipped = 0;
+        for (const list of lists) {
+          const status = TRELLO_LIST_MAP[list.id] || 'new';
+          for (const card of (list.cards || [])) {
+            const existing = tasks.find(t => t.source === 'trello' && t.description && t.description.includes(card.id));
+            if (existing) {
+              if (existing.status !== status) {
+                existing.status = status;
+                existing.updatedAt = new Date().toISOString();
+                updated++;
+              } else { skipped++; }
+              continue;
+            }
+            const now = new Date().toISOString();
+            tasks.push({
+              id: uuid(),
+              title: card.name,
+              description: card.desc + `\n\n[trello:${card.id}]`,
+              content: '',
+              status,
+              priority: (card.labels || []).some(l => l.name?.toLowerCase() === 'high') ? 'high' : 'medium',
+              assignee: 'main',
+              createdAt: card.dateLastActivity || now,
+              updatedAt: now,
+              dueDate: null,
+              notes: [{ text: `Imported from Trello: ${TRELLO_LIST_NAMES[list.id] || list.name}`, timestamp: now }],
+              source: 'trello',
+            });
+            imported++;
+          }
+        }
+        writeTasks(tasks);
+        return jsonReply(res, 200, { imported, updated, skipped, total: tasks.length });
+      })
+      .catch(e => errorReply(res, 502, 'Trello sync failed: ' + e.message));
+  }
+
+  return errorReply(res, 404, 'Not found');
+}
+
+// --- Route: Metrics (macOS) ---
+const { execSync: execSyncMetrics } = require('child_process');
+let prevCpuInfo = null;
+let prevNetInfo = null;
+let cpuHistoryData = [];
+let memHistoryData = [];
+
+function getMetrics() {
+  const now = Date.now();
+  const os = require('os');
+
+  // CPU
+  const cpus = os.cpus();
+  const cpuModel = cpus[0]?.model || 'Unknown';
+  const cpuCount = cpus.length;
+  let cpuPct = 0;
+  try {
+    const top = execSyncMetrics("top -l 1 -n 0 | head -4", { encoding: 'utf8', timeout: 5000 });
+    const cpuLine = top.match(/CPU usage:\s*([\d.]+)% user.*?([\d.]+)% sys/);
+    if (cpuLine) cpuPct = Math.round(parseFloat(cpuLine[1]) + parseFloat(cpuLine[2]));
+  } catch { cpuPct = 0; }
+
+  // Memory
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  const memPct = Math.round((usedMem / totalMem) * 100);
+
+  // Disk
+  let diskPct = 0, diskUsed = '', diskTotal = '', diskMount = '/';
+  try {
+    const df = execSyncMetrics("df -h / | tail -1", { encoding: 'utf8', timeout: 3000 }).trim().split(/\s+/);
+    diskTotal = df[1] || '0';
+    diskUsed = df[2] || '0';
+    diskPct = parseInt(df[4]) || 0;
+  } catch {}
+
+  // Network
+  let rxRate = '0 B/s', txRate = '0 B/s', totalRx = '0 B', totalTx = '0 B';
+  try {
+    const netstat = execSyncMetrics("netstat -ib | grep -E '^en0' | head -1", { encoding: 'utf8', timeout: 3000 }).trim().split(/\s+/);
+    if (netstat.length >= 10) {
+      totalRx = humanBytes(parseInt(netstat[6]) || 0);
+      totalTx = humanBytes(parseInt(netstat[9]) || 0);
+    }
+  } catch {}
+
+  // Uptime
+  let uptimeHuman = '';
+  try {
+    const up = execSyncMetrics("uptime", { encoding: 'utf8', timeout: 2000 }).trim();
+    const m = up.match(/up\s+(.+?),\s+\d+\s+user/);
+    uptimeHuman = m ? m[1].trim() : 'unknown';
+  } catch { uptimeHuman = 'unknown'; }
+
+  // Load
+  const load = os.loadavg();
+
+  // Top processes
+  let topProcesses = [];
+  try {
+    const ps = execSyncMetrics("ps aux -r | head -11 | tail -10", { encoding: 'utf8', timeout: 3000 });
+    topProcesses = ps.trim().split('\n').map(line => {
+      const parts = line.trim().split(/\s+/);
+      return { user: parts[0], pid: parts[1], cpu: parts[2] + '%', mem: parts[3] + '%', command: parts.slice(10).join(' ').substring(0, 60) };
+    });
+  } catch {}
+
+  // History
+  cpuHistoryData.push({ ts: now, value: cpuPct });
+  memHistoryData.push({ ts: now, value: memPct });
+  if (cpuHistoryData.length > 60) cpuHistoryData.shift();
+  if (memHistoryData.length > 60) memHistoryData.shift();
+
+  return {
+    timestamp: now,
+    hostname: os.hostname(),
+    platform: os.platform(),
+    arch: os.arch(),
+    nodeVersion: process.version,
+    cpu: { overall: cpuPct, count: cpuCount, model: cpuModel },
+    memory: { pct: memPct, usedHuman: humanBytes(usedMem), totalHuman: humanBytes(totalMem) },
+    disk: { pct: diskPct, usedHuman: diskUsed, totalHuman: diskTotal, mount: diskMount },
+    network: { rxRateHuman: rxRate, txRateHuman: txRate, totalRxHuman: totalRx, totalTxHuman: totalTx },
+    uptime: { human: uptimeHuman },
+    loadAvg: { '1m': load[0].toFixed(2), '5m': load[1].toFixed(2), '15m': load[2].toFixed(2) },
+    topProcesses,
+    history: { cpu: cpuHistoryData, mem: memHistoryData },
+  };
+}
+
+function humanBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+  return (bytes / 1073741824).toFixed(1) + ' GB';
+}
+
 // --- Main Server ---
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
@@ -1050,6 +1262,27 @@ const server = http.createServer((req, res) => {
   // Health check (no auth)
   if (pathname === '/health' && method === 'GET') {
     return jsonReply(res, 200, { status: 'ok', uptime: process.uptime() });
+  }
+
+  // Serve static HTML files (auth via query token)
+  const staticFiles = {
+    '/': 'agent-dashboard.html',
+    '/index.html': 'agent-dashboard.html',
+    '/agent-dashboard.html': 'agent-dashboard.html',
+    '/dashboard.html': 'server-monitor.html',
+    '/server-monitor.html': 'server-monitor.html',
+    '/favicon.svg': 'favicon.svg',
+  };
+  if (method === 'GET' && staticFiles[pathname]) {
+    const filePath = path.join(__dirname, staticFiles[pathname]);
+    try {
+      const content = fs.readFileSync(filePath);
+      const ext = path.extname(filePath);
+      const mimes = { '.html': 'text/html', '.svg': 'image/svg+xml' };
+      res.writeHead(200, { 'Content-Type': mimes[ext] || 'application/octet-stream', 'Content-Length': content.length });
+      res.end(content);
+      return;
+    } catch { /* fall through */ }
   }
 
   // Auth check
@@ -1071,6 +1304,8 @@ const server = http.createServer((req, res) => {
     if (root === 'logs') return handleLogs(req, res, parsed, segments, method);
     if (root === 'agents') return handleAgents(req, res, parsed, segments, method);
     if (root === 'cron') return handleCron(req, res, parsed, segments, method);
+    if (root === 'metrics') return jsonReply(res, 200, getMetrics());
+    if (root === 'trello') return handleTrello(req, res, parsed, segments, method);
     return errorReply(res, 404, 'Not found');
   } catch (e) {
     console.error('Unhandled error:', e);

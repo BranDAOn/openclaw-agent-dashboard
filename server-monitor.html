@@ -164,11 +164,10 @@
 </div>
 
 <script>
-const TOKEN = new URLSearchParams(location.search).get('token') || localStorage.getItem('openclaw_token') || '';
-if (TOKEN) localStorage.setItem('openclaw_token', TOKEN);
-const API = (location.port === '18789' || location.port === '18790')
-  ? `${location.protocol}//${location.hostname}:18790/metrics?token=${TOKEN}`
-  : `/metrics?token=${TOKEN}`;
+const p = new URLSearchParams(location.search).get('token');
+const TOKEN = p || localStorage.getItem('openclaw_token') || '';
+if (p) localStorage.setItem('openclaw_token', p);
+const API = `/metrics?token=${TOKEN}`;
 
 let cpuHistory = [], memHistory = [];
 

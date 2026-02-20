@@ -798,6 +798,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:16p
       <input type="text" class="search-input" id="taskSearch" placeholder="Search tasks…">
       <span class="spacer"></span>
       <button class="spawn-btn" onclick="toggleSelectionMode()" id="selectionModeBtn" title="Toggle selection mode for parallel execution">⚡ Parallel</button>
+      <button class="action-btn" onclick="syncTrello()" id="trelloSyncBtn" title="Import cards from Trello">📋 Trello Sync</button>
       <button class="create-btn" onclick="openCreateModal()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         New Task
@@ -978,14 +979,12 @@ header{display:flex;align-items:center;justify-content:space-between;padding:16p
 // ─── Auth ───
 function getToken() {
   const p = new URLSearchParams(location.search).get('token');
-  if (p) return p;
+  if (p) { localStorage.setItem('openclaw_token', p); return p; }
   try { const s = JSON.parse(localStorage.getItem('openclaw.control.settings.v1') || '{}'); if (s.token) return s.token; } catch(e) {}
   return localStorage.getItem('openclaw_token') || '';
 }
 const TOKEN = getToken();
-const API = (location.port === '18789' || location.port === '18790')
-  ? `${location.protocol}//${location.hostname}:18790`
-  : '';
+const API = '';
 
 async function apiFetch(path, opts = {}) {
   const sep = path.includes('?') ? '&' : '?';
@@ -1350,6 +1349,20 @@ function renderCreateAttQueue() {
       <button class="cai-remove" onclick="removePendingFile(${i})" title="Remove">✕</button>
     </div>`;
   }).join('');
+}
+
+async function syncTrello() {
+  const btn = document.getElementById('trelloSyncBtn');
+  btn.disabled = true; btn.textContent = '⏳ Syncing…';
+  try {
+    const result = await apiFetch('/trello/sync', { method: 'POST' });
+    btn.textContent = `✅ ${result.imported} new, ${result.updated} updated`;
+    loadTasks();
+    setTimeout(() => { btn.textContent = '📋 Trello Sync'; btn.disabled = false; }, 3000);
+  } catch(e) {
+    btn.textContent = '❌ Sync failed';
+    setTimeout(() => { btn.textContent = '📋 Trello Sync'; btn.disabled = false; }, 3000);
+  }
 }
 
 async function createTask() {
@@ -1856,7 +1869,7 @@ if (taskView === 'kanban') {
 }
 
 // ═══ DOCUMENTS ═══
-const WORKSPACE_FILES = ['MEMORY.md', 'SOUL.md', 'USER.md', 'AGENTS.md', 'TOOLS.md', 'IDENTITY.md', 'HEARTBEAT.md'];
+const WORKSPACE_FILES = ['SOUL.md', 'USER.md', 'AGENTS.md', 'TOOLS.md', 'HEARTBEAT.md'];
 let currentFile = null;
 let docView = 'editor';
 let allSkills = [];
