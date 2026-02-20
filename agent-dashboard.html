@@ -746,6 +746,14 @@ header{display:flex;align-items:center;justify-content:space-between;padding:16p
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
       APIs<span class="badge-count" id="apiCount">0</span>
     </button>
+    <button class="tab-btn" data-tab="tokens">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+      Tokens
+    </button>
+    <button class="tab-btn" data-tab="graph">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/></svg>
+      Memory Graph
+    </button>
     <button class="tab-btn" data-tab="logs">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:4px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       Logs
@@ -867,6 +875,37 @@ header{display:flex;align-items:center;justify-content:space-between;padding:16p
   </div>
 
   <!-- ═══ Logs Panel ═══ -->
+  <!-- Token Usage Panel -->
+  <div class="tab-panel" id="panel-tokens">
+    <div class="apis-stats" id="tokenStats"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+      <div class="glass-card" style="padding:20px">
+        <h3 style="margin:0 0 12px;font-size:.95rem;color:var(--text)">Daily Token Usage</h3>
+        <canvas id="tokenChart" style="width:100%;height:200px"></canvas>
+      </div>
+      <div class="glass-card" style="padding:20px">
+        <h3 style="margin:0 0 12px;font-size:.95rem;color:var(--text)">By Model</h3>
+        <div id="tokenByModel"></div>
+      </div>
+    </div>
+    <div class="glass-card" style="padding:20px;margin-top:16px">
+      <h3 style="margin:0 0 12px;font-size:.95rem;color:var(--text)">Top Sessions by Token Usage</h3>
+      <div id="tokenTopSessions" style="font-family:var(--mono);font-size:.8rem"></div>
+    </div>
+  </div>
+
+  <!-- Memory Graph Panel -->
+  <div class="tab-panel" id="panel-graph">
+    <div class="apis-stats" id="graphStats"></div>
+    <div class="glass-card" style="padding:20px;margin-top:16px;position:relative;overflow:hidden">
+      <canvas id="memoryGraphCanvas" style="width:100%;height:500px;cursor:grab"></canvas>
+    </div>
+    <div class="glass-card" style="padding:20px;margin-top:16px">
+      <h3 style="margin:0 0 12px;font-size:.95rem;color:var(--text)">Nodes</h3>
+      <div id="graphNodeList" style="font-family:var(--mono);font-size:.8rem"></div>
+    </div>
+  </div>
+
   <div class="tab-panel" id="panel-logs">
     <div class="logs-toolbar">
       <div class="filter-group" id="logDateFilters">
@@ -1023,7 +1062,9 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'tasks') loadTasks(true);
     if (btn.dataset.tab === 'documents') { loadFileList(); if (docView === 'skills') loadSkills(); }
     if (btn.dataset.tab === 'apis') renderAPIs();
-    if (btn.dataset.tab === 'logs') loadLogs();
+    if (btn.dataset.tab === 'tokens') loadTokenUsage();
+    if (btn.dataset.tab === 'graph') loadMemoryGraph();
+    if (btn.dataset.tab === 'logs') { loadLogs(); loadGatewayLogs(); }
   });
 });
 
@@ -2181,6 +2222,257 @@ function toggleAutoRefresh() {
     clearInterval(autoRefreshInterval);
     toast('Auto-refresh disabled', 'info');
   }
+}
+
+// ═══ TOKEN USAGE ═══
+async function loadTokenUsage() {
+  try {
+    const data = await apiFetch('/token-usage');
+    const stats = document.getElementById('tokenStats');
+    stats.innerHTML = `
+      <div class="api-stat-card"><div class="api-stat-value">${data.totalTokensHuman}</div><div class="api-stat-label">Total Tokens</div></div>
+      <div class="api-stat-card"><div class="api-stat-value">${data.sessionCount}</div><div class="api-stat-label">Sessions</div></div>
+      <div class="api-stat-card"><div class="api-stat-value">${Object.keys(data.byModel).length}</div><div class="api-stat-label">Models</div></div>
+      <div class="api-stat-card"><div class="api-stat-value">${data.dailyTrend.length}</div><div class="api-stat-label">Active Days</div></div>
+    `;
+
+    // By model
+    const modelDiv = document.getElementById('tokenByModel');
+    modelDiv.innerHTML = Object.entries(data.byModel).sort((a,b) => b[1] - a[1]).map(([model, tokens]) => {
+      const pct = Math.round((tokens / data.totalTokens) * 100);
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:.85rem;margin-bottom:4px">
+          <span style="color:var(--text)">${escHtml(model)}</span>
+          <span style="color:var(--text2)">${tokens > 1000000 ? (tokens/1000000).toFixed(1)+'M' : Math.round(tokens/1000)+'k'} (${pct}%)</span>
+        </div>
+        <div style="height:6px;background:var(--card);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:var(--accent);border-radius:3px"></div>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Top sessions
+    const sessDiv = document.getElementById('tokenTopSessions');
+    sessDiv.innerHTML = '<table style="width:100%;border-collapse:collapse">' +
+      '<tr style="color:var(--text2);font-size:.75rem"><th style="text-align:left;padding:4px 8px">Session</th><th style="text-align:left;padding:4px 8px">Category</th><th style="text-align:right;padding:4px 8px">Tokens</th></tr>' +
+      data.topSessions.map(s => `<tr style="border-top:1px solid var(--border)">
+        <td style="padding:4px 8px;color:var(--text);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(s.key.split(':').slice(-1)[0].substring(0,20))}</td>
+        <td style="padding:4px 8px"><span class="badge badge-${s.category === 'main' ? 'done' : s.category === 'subagent' ? 'in-progress' : 'new'}">${s.category}</span></td>
+        <td style="padding:4px 8px;text-align:right;color:var(--text)">${s.tokens > 1000 ? Math.round(s.tokens/1000)+'k' : s.tokens}</td>
+      </tr>`).join('') +
+      '</table>';
+
+    // Daily chart
+    if (data.dailyTrend.length > 0) {
+      drawTokenChart(data.dailyTrend);
+    }
+  } catch(e) { console.warn('Token usage fetch failed:', e.message); }
+}
+
+function drawTokenChart(trend) {
+  const canvas = document.getElementById('tokenChart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const maxTokens = Math.max(...trend.map(t => t.tokens));
+  const barWidth = Math.max(8, (w - 40) / trend.length - 4);
+
+  // Grid
+  ctx.strokeStyle = 'rgba(26,31,46,0.5)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = 20 + ((h - 40) / 4) * i;
+    ctx.beginPath(); ctx.moveTo(30, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+
+  // Bars
+  trend.forEach((d, i) => {
+    const barH = maxTokens > 0 ? ((d.tokens / maxTokens) * (h - 50)) : 0;
+    const x = 35 + i * (barWidth + 4);
+    const y = h - 20 - barH;
+    const gradient = ctx.createLinearGradient(x, y, x, h - 20);
+    gradient.addColorStop(0, 'rgba(124,92,252,0.9)');
+    gradient.addColorStop(1, 'rgba(124,92,252,0.3)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.roundRect(x, y, barWidth, barH, 3);
+    ctx.fill();
+  });
+
+  // Labels
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.font = '500 10px Outfit, sans-serif';
+  if (trend.length <= 10) {
+    trend.forEach((d, i) => {
+      const x = 35 + i * (barWidth + 4);
+      ctx.fillText(d.day.slice(5), x, h - 5);
+    });
+  }
+}
+
+// ═══ MEMORY GRAPH ═══
+let graphData = null;
+let graphOffset = { x: 0, y: 0 };
+let graphDragging = false;
+let graphDragStart = { x: 0, y: 0 };
+
+async function loadMemoryGraph() {
+  try {
+    const data = await apiFetch('/memory-graph');
+    graphData = data;
+
+    const stats = document.getElementById('graphStats');
+    stats.innerHTML = `
+      <div class="api-stat-card"><div class="api-stat-value">${data.nodeCount}</div><div class="api-stat-label">Files</div></div>
+      <div class="api-stat-card"><div class="api-stat-value">${data.edgeCount}</div><div class="api-stat-label">Links</div></div>
+      <div class="api-stat-card"><div class="api-stat-value">${data.nodes.filter(n=>n.type==='concept').length}</div><div class="api-stat-label">Concepts</div></div>
+      <div class="api-stat-card"><div class="api-stat-value">${data.nodes.filter(n=>n.type==='daily').length}</div><div class="api-stat-label">Daily Logs</div></div>
+    `;
+
+    // Node list
+    const nodeList = document.getElementById('graphNodeList');
+    const sorted = [...data.nodes].sort((a,b) => b.links - a.links);
+    nodeList.innerHTML = sorted.map(n => `
+      <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;margin:3px;background:var(--card);border-radius:6px;border:1px solid var(--border)">
+        <span style="width:8px;height:8px;border-radius:50%;background:${n.type==='concept'?'var(--accent)':n.type==='daily'?'var(--green)':'var(--yellow)'}"></span>
+        <span style="color:var(--text)">${escHtml(n.label)}</span>
+        ${n.links > 0 ? `<span style="color:var(--text2);font-size:.7rem">${n.links} links</span>` : ''}
+      </div>
+    `).join('');
+
+    drawMemoryGraph();
+  } catch(e) { console.warn('Memory graph fetch failed:', e.message); }
+}
+
+function drawMemoryGraph() {
+  if (!graphData) return;
+  const canvas = document.getElementById('memoryGraphCanvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const nodes = graphData.nodes;
+  const edges = graphData.edges;
+  if (!nodes.length) return;
+
+  // Simple force-directed layout (pre-computed positions)
+  const positions = {};
+  const conceptNodes = nodes.filter(n => n.type === 'concept');
+  const dailyNodes = nodes.filter(n => n.type === 'daily');
+  const workspaceNodes = nodes.filter(n => n.type === 'workspace');
+
+  // Place concepts in a circle in the center
+  conceptNodes.forEach((n, i) => {
+    const angle = (i / conceptNodes.length) * Math.PI * 2 - Math.PI / 2;
+    const radius = Math.min(w, h) * 0.25;
+    positions[n.id] = {
+      x: w / 2 + Math.cos(angle) * radius + graphOffset.x,
+      y: h / 2 + Math.sin(angle) * radius + graphOffset.y,
+    };
+  });
+
+  // Place daily logs in outer ring
+  dailyNodes.forEach((n, i) => {
+    const angle = (i / dailyNodes.length) * Math.PI * 2;
+    const radius = Math.min(w, h) * 0.42;
+    positions[n.id] = {
+      x: w / 2 + Math.cos(angle) * radius + graphOffset.x,
+      y: h / 2 + Math.sin(angle) * radius + graphOffset.y,
+    };
+  });
+
+  // Workspace files at top
+  workspaceNodes.forEach((n, i) => {
+    positions[n.id] = {
+      x: 80 + i * 100 + graphOffset.x,
+      y: 30 + graphOffset.y,
+    };
+  });
+
+  // Draw edges
+  ctx.strokeStyle = 'rgba(124,92,252,0.15)';
+  ctx.lineWidth = 1;
+  edges.forEach(e => {
+    const from = positions[e.source];
+    const to = positions[e.target];
+    if (!from || !to) return;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+  });
+
+  // Draw nodes
+  nodes.forEach(n => {
+    const pos = positions[n.id];
+    if (!pos) return;
+    const r = Math.max(4, Math.min(12, n.links * 2 + 4));
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = n.type === 'concept' ? 'rgba(124,92,252,0.8)' : n.type === 'daily' ? 'rgba(45,212,160,0.6)' : 'rgba(255,200,60,0.8)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Label
+    if (n.type !== 'daily' || dailyNodes.length < 15) {
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = '500 9px Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(n.label.substring(0, 20), pos.x, pos.y + r + 12);
+    }
+  });
+}
+
+// Graph drag
+document.addEventListener('DOMContentLoaded', () => {
+  const canvas = document.getElementById('memoryGraphCanvas');
+  if (canvas) {
+    canvas.addEventListener('mousedown', e => { graphDragging = true; graphDragStart = { x: e.clientX - graphOffset.x, y: e.clientY - graphOffset.y }; canvas.style.cursor = 'grabbing'; });
+    canvas.addEventListener('mousemove', e => { if (!graphDragging) return; graphOffset.x = e.clientX - graphDragStart.x; graphOffset.y = e.clientY - graphDragStart.y; drawMemoryGraph(); });
+    canvas.addEventListener('mouseup', () => { graphDragging = false; canvas.style.cursor = 'grab'; });
+    canvas.addEventListener('mouseleave', () => { graphDragging = false; canvas.style.cursor = 'grab'; });
+  }
+});
+
+// ═══ GATEWAY LIVE LOGS ═══
+async function loadGatewayLogs() {
+  try {
+    const data = await apiFetch('/gateway-logs?lines=150');
+    if (!data.lines) return;
+
+    // Inject gateway logs into the existing timeline alongside memory logs
+    const timeline = document.getElementById('logsTimeline');
+    const gatewayHtml = `<div class="glass-card" style="padding:16px;margin-bottom:16px">
+      <h3 style="margin:0 0 8px;font-size:.9rem;color:var(--accent)">🔴 Live Gateway Logs</h3>
+      <div style="max-height:400px;overflow-y:auto;font-family:var(--mono);font-size:.75rem;line-height:1.6;background:rgba(0,0,0,0.3);border-radius:8px;padding:12px">
+        ${data.lines.map(l => {
+          const color = l.level === 'error' ? '#ff6b6b' : l.level === 'warn' ? '#ffd43b' : l.level === 'debug' ? '#868e96' : 'var(--text2)';
+          return `<div style="color:${color};white-space:pre-wrap;word-break:break-all">${escHtml(l.text)}</div>`;
+        }).join('')}
+      </div>
+    </div>`;
+
+    // Prepend gateway logs to timeline
+    const existing = timeline.innerHTML;
+    if (!existing.includes('Live Gateway Logs')) {
+      timeline.insertAdjacentHTML('afterbegin', gatewayHtml);
+    } else {
+      timeline.querySelector('.glass-card').outerHTML = gatewayHtml;
+    }
+  } catch(e) { console.warn('Gateway logs fetch failed:', e.message); }
 }
 
 // ═══ CONNECTED APIs ═══

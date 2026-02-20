@@ -1245,6 +1245,150 @@ function humanBytes(bytes) {
   return (bytes / 1073741824).toFixed(1) + ' GB';
 }
 
+// --- Route: Gateway Logs (live streaming) ---
+const GATEWAY_LOG = path.join(process.env.HOME || '', '.openclaw', 'logs', 'gateway.log');
+const GATEWAY_ERR_LOG = path.join(process.env.HOME || '', '.openclaw', 'logs', 'gateway.err.log');
+
+function handleGatewayLogs(req, res, parsed, method) {
+  if (method !== 'GET') return errorReply(res, 405, 'Method not allowed');
+  const lines = parseInt(parsed.query.lines) || 100;
+  const logFile = parsed.query.type === 'error' ? GATEWAY_ERR_LOG : GATEWAY_LOG;
+  try {
+    const { execSync: ex } = require('child_process');
+    const content = ex(`tail -${lines} "${logFile}" 2>/dev/null || echo "(no log file)"`, { encoding: 'utf8', timeout: 3000 });
+    const logLines = content.trim().split('\n').map(line => {
+      let level = 'info';
+      if (/\[error\]|Error|ERR|FAIL/i.test(line)) level = 'error';
+      else if (/\[warn\]|WARN/i.test(line)) level = 'warn';
+      else if (/\[debug\]|DEBUG/i.test(line)) level = 'debug';
+      const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)/);
+      return { text: line, level, timestamp: tsMatch ? tsMatch[1] : null };
+    });
+    return jsonReply(res, 200, { lines: logLines, file: logFile, count: logLines.length });
+  } catch (e) {
+    return errorReply(res, 500, 'Failed to read logs: ' + e.message);
+  }
+}
+
+// --- Route: Token Usage ---
+function handleTokenUsage(req, res, parsed, method) {
+  if (method !== 'GET') return errorReply(res, 405, 'Method not allowed');
+  try {
+    const raw = fs.readFileSync(SESSIONS_FILE, 'utf8');
+    const sessions = JSON.parse(raw);
+    let totalTokens = 0;
+    const bySession = [];
+    const byModel = {};
+    const byDay = {};
+
+    for (const [key, session] of Object.entries(sessions)) {
+      const tokens = session.totalTokens || 0;
+      totalTokens += tokens;
+      const model = session.model || 'unknown';
+      byModel[model] = (byModel[model] || 0) + tokens;
+
+      // Group by day using updatedAt
+      if (session.updatedAt) {
+        const day = new Date(session.updatedAt).toISOString().split('T')[0];
+        byDay[day] = (byDay[day] || 0) + tokens;
+      }
+
+      let category = 'other';
+      if (key.endsWith(':main')) category = 'main';
+      else if (key.includes(':subagent:')) category = 'subagent';
+      else if (key.includes(':hook:')) category = 'hook';
+      else if (key.includes(':cron:')) category = 'cron';
+
+      bySession.push({
+        key,
+        category,
+        model,
+        tokens,
+        updatedAt: session.updatedAt || 0,
+      });
+    }
+
+    bySession.sort((a, b) => b.tokens - a.tokens);
+
+    // Daily trend (sorted)
+    const dailyTrend = Object.entries(byDay)
+      .map(([day, tokens]) => ({ day, tokens }))
+      .sort((a, b) => a.day.localeCompare(b.day));
+
+    return jsonReply(res, 200, {
+      totalTokens,
+      totalTokensHuman: totalTokens > 1000000 ? (totalTokens / 1000000).toFixed(1) + 'M' : Math.round(totalTokens / 1000) + 'k',
+      byModel,
+      dailyTrend,
+      topSessions: bySession.slice(0, 20),
+      sessionCount: bySession.length,
+    });
+  } catch (e) {
+    return errorReply(res, 500, 'Failed to read token usage: ' + e.message);
+  }
+}
+
+// --- Route: Memory Graph ---
+function handleMemoryGraph(req, res, parsed, method) {
+  if (method !== 'GET') return errorReply(res, 405, 'Method not allowed');
+  try {
+    const memDir = path.join(WORKSPACE, 'memory');
+    const files = fs.readdirSync(memDir).filter(f => f.endsWith('.md'));
+    const nodes = [];
+    const edges = [];
+    const nodeMap = {};
+
+    for (const file of files) {
+      const name = file.replace('.md', '');
+      const content = fs.readFileSync(path.join(memDir, file), 'utf8');
+      const size = content.length;
+      const isDaily = /^\d{4}-\d{2}-\d{2}/.test(name);
+
+      // Find all [[wikilinks]]
+      const links = [];
+      const linkRegex = /\[\[([^\]]+)\]\]/g;
+      let match;
+      while ((match = linkRegex.exec(content)) !== null) {
+        links.push(match[1].toLowerCase().replace(/\s+/g, '-'));
+      }
+
+      const node = { id: name, label: name, size, type: isDaily ? 'daily' : 'concept', links: links.length };
+      nodes.push(node);
+      nodeMap[name.toLowerCase()] = true;
+
+      for (const link of links) {
+        edges.push({ source: name, target: link });
+      }
+    }
+
+    // Also scan workspace root .md files
+    const rootFiles = fs.readdirSync(WORKSPACE).filter(f => f.endsWith('.md'));
+    for (const file of rootFiles) {
+      const name = file.replace('.md', '');
+      if (nodeMap[name.toLowerCase()]) continue;
+      const content = fs.readFileSync(path.join(WORKSPACE, file), 'utf8');
+      const linkRegex = /\[\[([^\]]+)\]\]/g;
+      const links = [];
+      let match;
+      while ((match = linkRegex.exec(content)) !== null) {
+        links.push(match[1].toLowerCase().replace(/\s+/g, '-'));
+      }
+      nodes.push({ id: name, label: name, size: content.length, type: 'workspace', links: links.length });
+      nodeMap[name.toLowerCase()] = true;
+      for (const link of links) {
+        edges.push({ source: name, target: link });
+      }
+    }
+
+    // Filter edges to only include nodes that exist
+    const validEdges = edges.filter(e => nodeMap[e.target.toLowerCase()] || nodeMap[e.source.toLowerCase()]);
+
+    return jsonReply(res, 200, { nodes, edges: validEdges, nodeCount: nodes.length, edgeCount: validEdges.length });
+  } catch (e) {
+    return errorReply(res, 500, 'Failed to build memory graph: ' + e.message);
+  }
+}
+
 // --- Main Server ---
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
@@ -1306,6 +1450,9 @@ const server = http.createServer((req, res) => {
     if (root === 'cron') return handleCron(req, res, parsed, segments, method);
     if (root === 'metrics') return jsonReply(res, 200, getMetrics());
     if (root === 'trello') return handleTrello(req, res, parsed, segments, method);
+    if (root === 'gateway-logs') return handleGatewayLogs(req, res, parsed, method);
+    if (root === 'token-usage') return handleTokenUsage(req, res, parsed, method);
+    if (root === 'memory-graph') return handleMemoryGraph(req, res, parsed, method);
     return errorReply(res, 404, 'Not found');
   } catch (e) {
     console.error('Unhandled error:', e);
@@ -1318,6 +1465,6 @@ server.on('error', (e) => {
   process.exit(1);
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`Agent Dashboard API server listening on port ${PORT}`);
 });
