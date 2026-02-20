@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Agent Dashboard — OpenClaw</title>
+<title>🦊 Momo Dashboard</title>
 <meta name="description" content="Glassmorphic agent management dashboard for OpenClaw with task kanban, document editor, API monitoring & real-time agent tracking.">
 <meta name="author" content="Abo-Elmakarem Shohoud">
-<meta property="og:title" content="OpenClaw Agent Dashboard">
+<meta property="og:title" content="Momo Dashboard">
 <meta property="og:description" content="Glassmorphic agent management dashboard for OpenClaw with task kanban, document editor, API monitoring & real-time agent tracking.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://github.com/karem505/openclaw-agent-dashboard">
-<meta property="og:image" content="https://raw.githubusercontent.com/karem505/openclaw-agent-dashboard/main/screenshots/tasks-kanban.png">
+<meta property="og:url" content="https://github.com/BranDAOn/openclaw-agent-dashboard">
+<meta property="og:image" content="https://raw.githubusercontent.com/BranDAOn/openclaw-agent-dashboard/main/screenshots/tasks-kanban.png">
 <script src="https://cdn.jsdelivr.net/npm/marked@14/marked.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap');
@@ -655,7 +655,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:16p
   <!-- Header -->
   <header>
     <div>
-      <div class="logo">Agent Dashboard</div>
+      <div class="logo">🦊 Momo Dashboard</div>
       <div class="logo-sub">OpenClaw · Task Management</div>
     </div>
     <div class="header-right">
@@ -2207,76 +2207,47 @@ const CONNECTED_APIS = [
     ]
   },
   {
-    id: 'notion',
-    name: 'Notion',
-    provider: 'Notion API',
-    icon: 'N',
-    iconClass: 'notion',
+    id: 'trello',
+    name: 'Trello',
+    provider: 'Trello API',
+    icon: '📋',
+    iconClass: 'trello',
     status: 'connected',
-    description: 'Project management and operations tracking. Databases for tasks, projects, follow-ups, and agent task queue.',
+    description: 'Task management via Kanban board. Backlog processing, card management, and Obsidian sync.',
     capabilities: [
-      { label: 'Databases', type: 'data' },
-      { label: 'Pages', type: 'data' },
-      { label: 'Task Polling', type: 'ai' },
-      { label: 'Daily Reports', type: 'data' }
+      { label: 'Kanban Board', type: 'data' },
+      { label: 'Card Management', type: 'data' },
+      { label: 'Obsidian Sync', type: 'data' },
+      { label: 'Notifications', type: 'messaging' }
     ]
   },
   {
-    id: 'brevo',
-    name: 'Brevo',
-    provider: 'Brevo (Sendinblue)',
-    icon: '📧',
-    iconClass: 'brevo',
+    id: 'spotify',
+    name: 'Spotify',
+    provider: 'Spotify Web API',
+    icon: '🎵',
+    iconClass: 'spotify',
     status: 'connected',
-    description: 'Email marketing platform with credits tracking. Manages contacts for campaigns and newsletters.',
+    description: 'Music playback control, search, history, and top tracks via Spotify Web API.',
     capabilities: [
-      { label: 'Email Campaigns', type: 'messaging' },
-      { label: 'Contact Mgmt', type: 'data' },
-      { label: 'Weekly Reports', type: 'data' },
-      { label: 'Templates', type: 'data' }
+      { label: 'Playback Control', type: 'data' },
+      { label: 'Search', type: 'search' },
+      { label: 'History', type: 'data' },
+      { label: 'Top Tracks', type: 'data' }
     ]
   },
   {
-    id: 'imap',
-    name: 'IMAP Email',
-    provider: 'your-email@example.com',
-    icon: '📬',
-    iconClass: 'email',
+    id: 'twitter',
+    name: 'Twitter / X',
+    provider: 'Twitter API v2',
+    icon: '𝕏',
+    iconClass: 'twitter',
     status: 'connected',
-    description: 'Company main email via IMAP/SMTP on A2 Hosting. Receives campaign replies and form submissions.',
+    description: 'Twitter API access for posting, reading timelines, and engagement analytics.',
     capabilities: [
-      { label: 'Read Inbox', type: 'data' },
-      { label: 'Send Email', type: 'messaging' },
-      { label: 'Lead Reports', type: 'data' },
-      { label: 'Form Submissions', type: 'data' }
-    ]
-  },
-  {
-    id: 'nano-banana-pro',
-    name: 'Nano Banana Pro',
-    provider: 'Google AI Studio',
-    icon: '🎨',
-    iconClass: 'imagen',
-    status: 'connected',
-    description: 'AI image generation via Gemini. Creates visuals, diagrams, and creative content on demand.',
-    capabilities: [
-      { label: 'Image Generation', type: 'ai' },
-      { label: 'Image Editing', type: 'ai' },
-      { label: 'Creative Art', type: 'ai' }
-    ]
-  },
-  {
-    id: 'whisper',
-    name: 'OpenAI Whisper',
-    provider: 'Local (CPU)',
-    icon: '🎙️',
-    iconClass: 'whisper',
-    status: 'connected',
-    description: 'Local speech-to-text transcription. Supports Arabic and multiple languages. CPU-only, no API key needed.',
-    capabilities: [
-      { label: 'Speech-to-Text', type: 'ai' },
-      { label: 'Arabic Support', type: 'ai' },
-      { label: 'Multi-Language', type: 'ai' }
+      { label: 'Post Tweets', type: 'messaging' },
+      { label: 'Read Timeline', type: 'data' },
+      { label: 'Analytics', type: 'data' }
     ]
   },
   {
@@ -2294,36 +2265,31 @@ const CONNECTED_APIS = [
     ]
   },
   {
-    id: 'tavily',
-    name: 'Tavily',
-    provider: 'Tavily API',
-    icon: '🔍',
-    iconClass: 'tavily',
+    id: 'weather',
+    name: 'Weather',
+    provider: 'wttr.in',
+    icon: '🌤️',
+    iconClass: 'weather',
     status: 'connected',
-    description: 'Advanced AI-powered web search with content extraction. Deep research and URL fetching capabilities.',
+    description: 'Current weather and forecasts. No API key required.',
     capabilities: [
-      { label: 'AI Search', type: 'search' },
-      { label: 'Content Extract', type: 'data' },
-      { label: 'Deep Research', type: 'ai' }
+      { label: 'Current Weather', type: 'data' },
+      { label: 'Forecast', type: 'data' },
+      { label: 'Location Search', type: 'search' }
     ]
   },
   {
-    id: 'meta',
-    name: 'Meta Business API',
-    provider: 'Meta (Facebook/Instagram)',
-    icon: 'M',
-    iconClass: 'meta',
+    id: 'apple-reminders',
+    name: 'Apple Reminders',
+    provider: 'remindctl CLI',
+    icon: '⏰',
+    iconClass: 'reminders',
     status: 'connected',
-    description: 'Meta Business Suite integration for Facebook Pages, Instagram Business, WhatsApp Cloud API, and Ads management. Enables social media automation, content publishing, and audience analytics.',
+    description: 'Native Apple Reminders integration via remindctl CLI. Lists, date filters, and JSON output.',
     capabilities: [
-      { label: 'Facebook Pages', type: 'messaging' },
-      { label: 'Instagram Business', type: 'messaging' },
-      { label: 'WhatsApp Cloud', type: 'messaging' },
-      { label: 'Meta Ads', type: 'data' },
-      { label: 'Audience Insights', type: 'data' },
-      { label: 'Content Publishing', type: 'messaging' },
-      { label: 'Threads API', type: 'messaging' },
-      { label: 'Webhooks', type: 'data' }
+      { label: 'Add Reminders', type: 'data' },
+      { label: 'List/Filter', type: 'data' },
+      { label: 'Complete', type: 'data' }
     ]
   },
   {
@@ -2919,7 +2885,7 @@ document.addEventListener('keydown', e => {
 </script>
 <footer style="text-align:center;padding:24px 0 16px;color:#8b949e;font-size:0.85rem;font-family:'Outfit',sans-serif;">
   Built by <a href="https://abo-elmakarem.netlify.app" target="_blank" style="color:#7c5cfc;text-decoration:none;">Abo-Elmakarem Shohoud</a> ·
-  <a href="https://github.com/karem505/openclaw-agent-dashboard" target="_blank" style="color:#8b949e;text-decoration:none;">GitHub</a>
+  <a href="https://github.com/BranDAOn/openclaw-agent-dashboard" target="_blank" style="color:#8b949e;text-decoration:none;">GitHub</a>
 </footer>
 </body>
 </html>

@@ -10,9 +10,13 @@ const url = require('url');
 // --- Config ---
 const PORT = parseInt(process.env.DASHBOARD_PORT || '18791', 10);
 const AUTH_TOKEN = process.env.OPENCLAW_AUTH_TOKEN || '';
-const WORKSPACE = process.env.OPENCLAW_WORKSPACE || path.join(process.env.HOME || '', 'clawd');
+const WORKSPACE = process.env.OPENCLAW_WORKSPACE || path.join(process.env.HOME || '', '.openclaw', 'workspace');
 const TASKS_FILE = path.join(__dirname, 'tasks.json');
-const SKILLS_DIR = path.join(WORKSPACE, 'skills');
+const SKILLS_DIRS = [
+  path.join(process.env.HOME || '', '.openclaw', 'skills'),
+  path.join(WORKSPACE, 'skills'),
+  '/opt/homebrew/lib/node_modules/openclaw/skills',
+];
 const MEMORY_DIR = path.join(WORKSPACE, 'memory');
 const SESSIONS_FILE = process.env.OPENCLAW_SESSIONS_FILE || path.join(process.env.HOME || '', '.openclaw', 'agents', 'main', 'sessions', 'sessions.json');
 const SUBAGENT_RUNS_FILE = process.env.OPENCLAW_SUBAGENT_RUNS || path.join(process.env.HOME || '', '.openclaw', 'subagents', 'runs.json');
@@ -427,6 +431,7 @@ function handleSkills(req, res, method) {
   if (method !== 'GET') return errorReply(res, 405, 'Method not allowed');
 
   const skills = [];
+  const seen = new Set();
 
   function scanDir(dir) {
     let entries;
@@ -443,13 +448,16 @@ function handleSkills(req, res, method) {
         try {
           const raw = fs.readFileSync(full, 'utf8');
           const skill = parseSkillFrontmatter(raw, full);
-          if (skill) skills.push(skill);
+          if (skill && !seen.has(skill.name)) {
+            seen.add(skill.name);
+            skills.push(skill);
+          }
         } catch { /* skip */ }
       }
     }
   }
 
-  scanDir(SKILLS_DIR);
+  for (const dir of SKILLS_DIRS) scanDir(dir);
   jsonReply(res, 200, skills);
 }
 
@@ -839,10 +847,11 @@ function signalGatewayReload() {
     const { execSync } = require('child_process');
     execSync("kill -USR1 $(pgrep -f 'node.*openclaw.*gateway' | head -1) 2>/dev/null || true", { timeout: 3000 });
   } catch {}
-  // Also try restarting gateway service for full reload
+  // macOS: use launchctl to restart gateway
   try {
     const { execSync } = require('child_process');
-    execSync('sudo systemctl restart openclaw-gateway 2>/dev/null || true', { timeout: 10000 });
+    const uid = execSync('id -u', { encoding: 'utf8' }).trim();
+    execSync(`launchctl kickstart -k gui/${uid}/com.openclaw.gateway 2>/dev/null || true`, { timeout: 10000 });
   } catch {}
 }
 
